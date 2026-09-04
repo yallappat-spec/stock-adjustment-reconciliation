@@ -129,6 +129,27 @@ tbody tr:hover td{background:#F7F9FA}
 .empty{padding:44px 20px;text-align:center;color:var(--ink-soft);font-size:14px}
 .rowcount{font-size:13px;color:var(--ink-soft);margin-top:10px}
 
+/* ---------- tabs ---------- */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:18px}
+.tab{background:transparent;border:none;border-bottom:2px solid transparent;padding:9px 16px;
+  font-size:14px;font-weight:600;color:var(--ink-soft);border-radius:0}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--accent-dark);border-bottom-color:var(--accent)}
+.tab .count{display:inline-block;margin-left:7px;background:var(--line);color:var(--ink-soft);
+  border-radius:10px;padding:1px 8px;font-size:12px;font-weight:600;min-width:20px;text-align:center}
+.tab[aria-selected="true"] .count{background:var(--accent);color:#fff}
+.tab[disabled]{opacity:.45;cursor:not-allowed}
+.toolbar .lead{font-size:13px;color:var(--ink-soft)}
+
+.tag.mrpdiff{background:var(--c-unsupported)}
+.tag.mrpmulti{background:var(--c-direction)}
+.tag.mrpmissing{background:var(--c-pending)}
+.tag.mrpok{background:var(--c-matched)}
+.stat.mrpdiff .n{color:var(--c-unsupported)}
+.stat.mrpmulti .n{color:var(--c-direction)}
+.stat.mrpmissing .n{color:var(--c-pending)}
+.stat.mrpok .n{color:var(--c-matched)}
+
 .notice{background:#FFF6E8;border:1px solid #EBD3A8;color:#7A4E06;padding:11px 14px;border-radius:4px;
   font-size:13.5px;margin-bottom:16px}
 .notice.error{background:#FDEEF0;border-color:#E9BDC4;color:#8A1424}
@@ -198,6 +219,12 @@ tbody tr:hover td{background:#F7F9FA}
   </div>
 
   <div id="results" class="hidden">
+    <div class="tabs hidden" id="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true"  data-pane="pane-recon">Reconciliation<span class="count" id="cnt-recon">0</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-pane="pane-mrp">MRP mismatch<span class="count" id="cnt-mrp">0</span></button>
+    </div>
+
+    <div id="pane-recon" role="tabpanel">
     <div id="warn" class="notice hidden"></div>
     <div class="summary" id="summary"></div>
     <div class="toolbar">
@@ -209,11 +236,27 @@ tbody tr:hover td{background:#F7F9FA}
       <div class="grow">
         <input type="text" id="search" placeholder="Find a barcode or store">
         <button class="btn-ghost" id="csv">Download what's shown</button>
-        <button class="btn-ghost" id="back">Change columns</button>
+        <button class="btn-ghost btn-back" id="back">Change columns</button>
       </div>
     </div>
     <div class="tablewrap"><table id="tbl"><thead></thead><tbody></tbody></table></div>
     <div class="rowcount" id="rowcount"></div>
+    </div>
+
+    <div id="pane-mrp" role="tabpanel" class="hidden">
+      <div id="mrp-warn" class="notice hidden"></div>
+      <div class="summary" id="mrp-summary"></div>
+      <div class="toolbar">
+        <span class="lead">Barcode–store pairs found in both reports whose MRP does not agree.</span>
+        <div class="grow">
+          <input type="text" id="mrp-search" placeholder="Find a barcode or store">
+          <button class="btn-ghost" id="mrp-csv">Download what's shown</button>
+          <button class="btn-ghost btn-back">Change columns</button>
+        </div>
+      </div>
+      <div class="tablewrap"><table id="mrp-tbl"><thead></thead><tbody></tbody></table></div>
+      <div class="rowcount" id="mrp-rowcount"></div>
+    </div>
   </div>
 
 </div>
@@ -229,12 +272,25 @@ const CATS = {
   matched:     {label:"Matched",            desc:"Variance and adjustment agree"}
 };
 
+/* MRP is a unit rate, not a quantity — it is never summed. Each side keeps the
+   distinct MRPs seen on its lines, so a barcode carrying two different MRPs
+   inside one file is reported rather than silently collapsed. */
+const MRPCATS = {
+  mrpdiff:    {label:"MRP mismatch",  desc:"In both reports, MRP differs"},
+  mrpmulti:   {label:"Multiple MRPs", desc:"One barcode carries more than one MRP within a file"},
+  mrpmissing: {label:"MRP missing",   desc:"MRP present on one side only"},
+  mrpok:      {label:"MRP agrees",    desc:"MRP matches on both sides"}
+};
+
 const state = {
   variance:   {name:null, rows:null, sheets:null, sheet:null, headerRow:0, headers:[]},
   adjustment: {name:null, rows:null, sheets:null, sheet:null, headerRow:0, headers:[]},
   result: null,
   sortKey: "absGap",
-  sortDir: -1
+  sortDir: -1,
+  mrpSortKey: "absMrpGap",
+  mrpSortDir: -1,
+  tab: "pane-recon"
 };
 
 /* ---------------- value helpers ---------------- */
@@ -427,6 +483,7 @@ function renderMapper(which, elId, title){
     qty:     guess(H,[/(diff|var|adj|short|excess).*(qty|quantity|pcs)/,/(qty|quantity|pcs|pieces)/,/difference/,/variance/],/value|amount|rate|mrp|cost|price/),
     value:   guess(H,[/(diff|var|adj).*(value|amount|amt)/,/(stk|stock|net|total).*value/,/^value/,/amount/,/^amt/],
                      /bar\s*code|item\s*code|design|hsn|^code|sac/),
+    mrp:     guess(H,[/^mrp$/,/\bmrp\b/,/max.*retail/],/stk|stock|value|amount|total|net/),
     desc:    guess(H,[/item\s*name/,/description/,/product\s*name/,/^desc/,/category/,/design/]),
     date:    guess(H,[/trans.*date/,/adj.*date/,/audit.*date/,/^date/,/date$/],/update|modif/)
   };
@@ -455,6 +512,8 @@ function renderMapper(which, elId, title){
       '<select data-f="'+which+'" data-k="typeCol">'+opts(H,g.type,true)+'</select></div>'+
     '<div class="field"><label>Value <span class="optional">(optional)</span></label>'+
       '<select data-f="'+which+'" data-k="value">'+opts(H,g.value,true)+'</select></div>'+
+    '<div class="field"><label>MRP <span class="optional">(optional)</span></label>'+
+      '<select data-f="'+which+'" data-k="mrp">'+opts(H,g.mrp,true)+'</select></div>'+
     '<div class="field"><label>Date <span class="optional">(optional)</span></label>'+
       '<select data-f="'+which+'" data-k="date">'+opts(H,g.date,true)+'</select></div>'+
     '<div class="field"><label>Item name <span class="optional">(optional)</span></label>'+
@@ -462,8 +521,8 @@ function renderMapper(which, elId, title){
     '<div class="checkline"><input type="checkbox" data-f="'+which+'" data-k="flip" id="flip-'+which+'">'+
       '<label for="flip-'+which+'">Reverse the sign of this file</label></div>';
 
-  s.map = {barcode:g.barcode, store:g.store, qty:g.qty, value:g.value, desc:g.desc, date:g.date,
-           typeCol:g.type, signMode:g.signMode, flip:false};
+  s.map = {barcode:g.barcode, store:g.store, qty:g.qty, value:g.value, mrp:g.mrp, desc:g.desc,
+           date:g.date, typeCol:g.type, signMode:g.signMode, flip:false};
 }
 
 document.addEventListener("change", e => {
@@ -509,17 +568,19 @@ function aggregate(which, ignoreStore){
     if(m.flip) q = -q;
 
     let v = m.value >= 0 ? Math.abs(toNum(row[m.value])) * (q < 0 ? -1 : 1) : 0;
+    const mr = m.mrp >= 0 ? Math.abs(toNum(row[m.mrp])) : 0;
     const d  = m.desc >= 0 ? cellText(row[m.desc]).trim() : "";
     const dt = m.date >= 0 ? cellText(row[m.date]).trim() : "";
 
     if(out.has(key)){
       const e = out.get(key);
       e.qty += q; e.val += v; e.lines++;
+      if(mr && !e.mrps.includes(mr)) e.mrps.push(mr);
       if(!e.desc && d) e.desc = d;
       if(dt && !e.dates.includes(dt)) e.dates.push(dt);
     } else {
       out.set(key, {barcode: cellText(row[m.barcode]).trim(), storeRaw: m.store>=0?cellText(row[m.store]).trim():"",
-                    qty:q, val:v, desc:d, lines:1, dates: dt?[dt]:[]});
+                    qty:q, val:v, mrps: mr?[mr]:[], desc:d, lines:1, dates: dt?[dt]:[]});
     }
   }
   return {map: out, skipped};
@@ -563,16 +624,44 @@ function reconcile(){
       varQty:  vq, adjQty: aq, gap, absGap: Math.abs(gap),
       varVal:  v ? v.val : null, adjVal: a ? a.val : null,
       valGap:  ((v ? v.val : 0) - (a ? a.val : 0)),
+      varMrp:  v && v.mrps.length ? v.mrps[0] : null,
+      adjMrp:  a && a.mrps.length ? a.mrps[0] : null,
+      varMrps: v ? v.mrps : [],
+      adjMrps: a ? a.mrps : [],
       lines:   (v?v.lines:0) + "/" + (a?a.lines:0),
       merged:  Math.max(v?v.lines:0, a?a.lines:0) > 1,
       cat
     });
   });
 
+  /* MRP is only comparable where the pair exists on both sides - a barcode with
+     no adjustment, or no declaration, has nothing to compare against. */
+  const hasMrp = state.variance.map.mrp >= 0 && state.adjustment.map.mrp >= 0;
+  const mrpRows = [];
+  if(hasMrp){
+    rows.forEach(r => {
+      if(r.varQty === null || r.adjQty === null) return;
+      let mc;
+      if(r.varMrps.length > 1 || r.adjMrps.length > 1)   mc = "mrpmulti";
+      else if(r.varMrp === null || r.adjMrp === null)    mc = "mrpmissing";
+      else if(r.varMrp === r.adjMrp)                     mc = "mrpok";
+      else                                               mc = "mrpdiff";
+      r.mrpCat = mc;
+      const g = mc === "mrpmulti" ? null : (r.varMrp || 0) - (r.adjMrp || 0);
+      mrpRows.push({
+        barcode:r.barcode, store:r.store, desc:r.desc,
+        varMrp:r.varMrp, adjMrp:r.adjMrp, mrpGap:g, absMrpGap: g === null ? null : Math.abs(g),
+        varMrpAll: r.varMrps.map(fmtNum).join(" / "), adjMrpAll: r.adjMrps.map(fmtNum).join(" / "),
+        varQty:r.varQty, adjQty:r.adjQty, lines:r.lines, mrpCat:mc
+      });
+    });
+  }
+
   const hasVarVal = state.variance.map.value >= 0;
   const hasAdjVal = state.adjustment.map.value >= 0;
   const hasDate   = state.variance.map.date >= 0 || state.adjustment.map.date >= 0;
-  state.result = {rows, hasVarVal, hasAdjVal, hasDate, ignoreStore, skipped: V.skipped + A.skipped,
+  state.result = {rows, mrpRows, hasMrp, hasVarVal, hasAdjVal, hasDate, ignoreStore,
+                  skipped: V.skipped + A.skipped,
                   merged: rows.filter(r => r.merged).length,
                   varKeys: V.map.size, adjKeys: A.map.size};
   renderResults();
@@ -641,7 +730,118 @@ function renderResults(){
   if(notes.length){ warn.innerHTML = notes.join("<br>"); warn.classList.remove("hidden"); }
   else warn.classList.add("hidden");
 
+  document.getElementById("cnt-recon").textContent = exceptions.toLocaleString("en-IN");
+  selectTab("pane-recon");
+  renderMrpPane();
   renderTable();
+}
+
+const MRPCOLS = [
+  {k:"barcode", t:"Barcode",         cls:"bc"},
+  {k:"store",   t:"Store",           cls:""},
+  {k:"desc",    t:"Item",            cls:""},
+  {k:"varMrp",  t:"Variance MRP",    cls:"num", num:true},
+  {k:"adjMrp",  t:"Adjustment MRP",  cls:"num", num:true},
+  {k:"mrpGap",  t:"MRP gap",         cls:"num", num:true, signed:true},
+  {k:"varQty",  t:"Variance qty",    cls:"num", num:true},
+  {k:"adjQty",  t:"Adjusted qty",    cls:"num", num:true},
+  {k:"lines",   t:"Lines",           cls:"num"},
+  {k:"mrpCat",  t:"Finding",         cls:""}
+];
+
+function mrpExceptions(){
+  return state.result.mrpRows.filter(r => r.mrpCat !== "mrpok");
+}
+
+function visibleMrpRows(){
+  const q = document.getElementById("mrp-search").value.trim().toUpperCase();
+  return mrpExceptions().filter(r =>
+    !q || r.barcode.toUpperCase().includes(q) || r.store.toUpperCase().includes(q)
+       || r.desc.toUpperCase().includes(q)
+  ).sort((x,y) => {
+    const a = x[state.mrpSortKey], b = y[state.mrpSortKey];
+    if(a === null) return 1;
+    if(b === null) return -1;
+    if(typeof a === "string") return a.localeCompare(b) * state.mrpSortDir;
+    return (a - b) * state.mrpSortDir;
+  });
+}
+
+function renderMrpPane(){
+  const R = state.result;
+  document.getElementById("tabs").classList.toggle("hidden", !R.hasMrp);
+  if(!R.hasMrp){
+    document.getElementById("mrp-summary").innerHTML = "";
+    document.querySelector("#mrp-tbl thead").innerHTML = "";
+    document.querySelector("#mrp-tbl tbody").innerHTML = "";
+    document.getElementById("mrp-rowcount").textContent = "";
+    return;
+  }
+  const n = c => R.mrpRows.filter(r => r.mrpCat === c).length;
+  let h = "";
+  [["mrpdiff","MRP mismatch"],["mrpmulti","Multiple MRPs"],
+   ["mrpmissing","MRP missing"],["mrpok","MRP agrees"]].forEach(([c,label]) => {
+    h += '<div class="stat '+c+'"><div class="n">'+n(c).toLocaleString("en-IN")+'</div>'+
+         '<div class="l">'+label+'</div><div class="v">&nbsp;</div></div>';
+  });
+  h += '<div class="stat"><div class="n">'+R.mrpRows.length.toLocaleString("en-IN")+'</div>'+
+       '<div class="l">Pairs compared</div>'+
+       '<div class="v">'+mrpExceptions().length.toLocaleString("en-IN")+' need attention</div></div>';
+  document.getElementById("mrp-summary").innerHTML = h;
+
+  const warn = document.getElementById("mrp-warn");
+  if(n("mrpmulti")){
+    warn.innerHTML = n("mrpmulti").toLocaleString("en-IN") +
+      " barcode-store pairs carry more than one MRP inside a single report. Every distinct " +
+      "MRP is listed, so check whether the item was re-priced part way through the period.";
+    warn.classList.remove("hidden");
+  } else warn.classList.add("hidden");
+
+  document.getElementById("cnt-mrp").textContent = mrpExceptions().length.toLocaleString("en-IN");
+  renderMrpTable();
+}
+
+function renderMrpTable(){
+  const rows = visibleMrpRows();
+  document.querySelector("#mrp-tbl thead").innerHTML = "<tr>" + MRPCOLS.map(c =>
+    '<th data-k="'+c.k+'" class="'+(c.num?"num":"")+'">'+c.t+
+    (state.mrpSortKey===c.k?'<span class="arrow">'+(state.mrpSortDir>0?"\u2191":"\u2193")+'</span>':'')+
+    '</th>').join("") + "</tr>";
+
+  const tb = document.querySelector("#mrp-tbl tbody");
+  if(!rows.length){
+    tb.innerHTML = '<tr><td colspan="'+MRPCOLS.length+'"><div class="empty">'+
+      (state.result.mrpRows.length
+        ? "Every MRP agrees across the two reports."
+        : "No barcode-store pair appears in both reports, so there is no MRP to compare.")+
+      '</div></td></tr>';
+  } else {
+    tb.innerHTML = rows.slice(0, 4000).map(r => "<tr>" + MRPCOLS.map(c => {
+      let v = r[c.k], cls = c.cls;
+      if(c.k === "mrpCat") return '<td><span class="tag '+v+'">'+MRPCATS[v].label+'</span></td>';
+      if(c.k === "varMrp" && r.varMrpAll.indexOf(" / ") >= 0)
+        return '<td class="num">'+escapeHtml(r.varMrpAll)+'</td>';
+      if(c.k === "adjMrp" && r.adjMrpAll.indexOf(" / ") >= 0)
+        return '<td class="num">'+escapeHtml(r.adjMrpAll)+'</td>';
+      if(c.num){
+        if(v === null || v === undefined) return '<td class="num" style="color:#B9C0C8">\u2014</td>';
+        if(v < 0) cls += " neg";
+        return '<td class="'+cls+'">'+(c.signed?fmtSigned(v):fmtNum(v))+'</td>';
+      }
+      return '<td class="'+cls+'">'+escapeHtml(v||"")+'</td>';
+    }).join("") + "</tr>").join("");
+  }
+  document.getElementById("mrp-rowcount").textContent =
+    rows.length.toLocaleString("en-IN") + " row" + (rows.length===1?"":"s") + " shown" +
+    (rows.length > 4000 ? " \u2014 first 4,000 rendered, download for the rest" : "");
+}
+
+function selectTab(pane){
+  state.tab = pane;
+  document.querySelectorAll("#tabs .tab").forEach(b =>
+    b.setAttribute("aria-selected", b.dataset.pane === pane ? "true" : "false"));
+  ["pane-recon","pane-mrp"].forEach(id =>
+    document.getElementById(id).classList.toggle("hidden", id !== pane));
 }
 
 function buildCols(R){
@@ -708,6 +908,41 @@ document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () =
 }));
 document.getElementById("search").addEventListener("input", renderTable);
 
+document.getElementById("tabs").addEventListener("click", e => {
+  const t = e.target.closest(".tab");
+  if(t) selectTab(t.dataset.pane);
+});
+
+document.querySelector("#mrp-tbl thead").addEventListener("click", e => {
+  const th = e.target.closest("th"); if(!th) return;
+  const k = th.dataset.k;
+  if(state.mrpSortKey === k) state.mrpSortDir *= -1;
+  else { state.mrpSortKey = k;
+         state.mrpSortDir = (k==="barcode"||k==="store"||k==="desc"||k==="mrpCat") ? 1 : -1; }
+  renderMrpTable();
+});
+
+document.getElementById("mrp-search").addEventListener("input", renderMrpTable);
+
+document.getElementById("mrp-csv").addEventListener("click", () => {
+  const esc = v => '"' + String(v===null||v===undefined?"":v).replace(/"/g,'""') + '"';
+  const lines = [MRPCOLS.map(c => esc(c.t)).join(",")];
+  visibleMrpRows().forEach(r => {
+    lines.push(MRPCOLS.map(c => {
+      if(c.k === "mrpCat") return esc(MRPCATS[r.mrpCat].label);
+      if(c.k === "varMrp" && r.varMrpAll.indexOf(" / ") >= 0) return esc(r.varMrpAll);
+      if(c.k === "adjMrp" && r.adjMrpAll.indexOf(" / ") >= 0) return esc(r.adjMrpAll);
+      return esc(r[c.k]);
+    }).join(","));
+  });
+  const blob = new Blob(["\ufeff"+lines.join("\r\n")], {type:"text/csv;charset=utf-8;"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "mrp-mismatch-" + new Date().toISOString().slice(0,10) + ".csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
 document.getElementById("csv").addEventListener("click", () => {
   const cols = buildCols(state.result);
   const esc = s => '"' + String(s===null||s===undefined?"":s).replace(/"/g,'""') + '"';
@@ -723,10 +958,10 @@ document.getElementById("csv").addEventListener("click", () => {
   URL.revokeObjectURL(a.href);
 });
 
-document.getElementById("back").addEventListener("click", () => {
+document.querySelectorAll(".btn-back").forEach(b => b.addEventListener("click", () => {
   document.getElementById("results").classList.add("hidden");
   document.getElementById("setup").classList.remove("hidden");
-});
+}));
 document.getElementById("run").addEventListener("click", reconcile);
 document.getElementById("reset").addEventListener("click", () => location.reload());
 

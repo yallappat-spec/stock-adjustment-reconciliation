@@ -15,7 +15,8 @@ reports never leave the machine they are opened on.
    quantity, value, date and item-name columns from the headers; correct anything
    it got wrong.
 3. Reconcile. Filter by finding, search a barcode or store, sort any column, and
-   download what's on screen as CSV.
+   download what's on screen as CSV. If MRP is mapped on both reports, a second tab
+   compares MRP as well.
 
 ### Findings
 
@@ -26,6 +27,28 @@ reports never leave the machine they are opened on.
 | **Direction mismatch** | Excess declared but shortage adjusted, or the reverse |
 | **Quantity mismatch** | Both sides present, quantities differ |
 | **Matched** | Variance and adjustment agree |
+
+### MRP comparison
+
+Map the **MRP** column on both reports and a second tab appears, comparing the MRP
+each report carries for the same barcode and store. It only covers pairs present in
+both reports — a barcode with no adjustment, or no declaration, has nothing to
+compare against and is left to the reconciliation tab.
+
+| Finding | Meaning |
+| --- | --- |
+| **MRP mismatch** | In both reports, MRP differs |
+| **Multiple MRPs** | One barcode carries more than one MRP within a single report |
+| **MRP missing** | MRP present on one side only |
+| **MRP agrees** | MRP matches on both sides |
+
+The tab lists the exceptions and has its own search and CSV download. MRP is a unit
+rate, so it is never summed the way quantities are — where a barcode carries several
+MRPs inside one file, every distinct value is listed and no gap is reported, since a
+gap against one of several prices would be arbitrary.
+
+Leave the MRP column unmapped and the tabs stay hidden; the tool behaves exactly as
+it did before.
 
 ### Notes on matching
 
