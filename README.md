@@ -42,6 +42,14 @@ compare against and is left to the reconciliation tab.
 | **MRP missing** | MRP present on one side only |
 | **MRP agrees** | MRP matches on both sides |
 
+MRP is always checked **store by store**. A price only means anything against the
+store that carries it, so the MRP tab does not inherit the barcode-only setting used
+for quantity matching — it re-aggregates on barcode and store regardless. A barcode
+priced two ways across two stores is therefore reported as one finding per store
+rather than pooled into a single row, and the MRP tab can legitimately show more
+pairs than the reconciliation tab. If no store column is mapped on both reports the
+tab says so instead of implying a per-store check it could not make.
+
 The tab lists the exceptions and has its own search and CSV download. MRP is a unit
 rate, so it is never summed the way quantities are — where a barcode carries several
 MRPs inside one file, every distinct value is listed and no gap is reported, since a

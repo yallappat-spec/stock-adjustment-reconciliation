@@ -624,35 +624,40 @@ function reconcile(){
       varQty:  vq, adjQty: aq, gap, absGap: Math.abs(gap),
       varVal:  v ? v.val : null, adjVal: a ? a.val : null,
       valGap:  ((v ? v.val : 0) - (a ? a.val : 0)),
-      varMrp:  v && v.mrps.length ? v.mrps[0] : null,
-      adjMrp:  a && a.mrps.length ? a.mrps[0] : null,
-      varMrps: v ? v.mrps : [],
-      adjMrps: a ? a.mrps : [],
       lines:   (v?v.lines:0) + "/" + (a?a.lines:0),
       merged:  Math.max(v?v.lines:0, a?a.lines:0) > 1,
       cat
     });
   });
 
-  /* MRP is only comparable where the pair exists on both sides - a barcode with
-     no adjustment, or no declaration, has nothing to compare against. */
+  /* A price only means anything against the store that carries it, so MRP is always
+     checked within a store. Quantity matching can be told to ignore the store column
+     when the two files spell store codes differently; the MRP tab does not inherit
+     that - it re-aggregates on barcode+store so a barcode priced two ways across two
+     stores is reported as one mismatch per store, not pooled into a single row. */
   const hasMrp = state.variance.map.mrp >= 0 && state.adjustment.map.mrp >= 0;
+  const bothHaveStore = state.variance.map.store >= 0 && state.adjustment.map.store >= 0;
+  const mrpStoreWise = bothHaveStore;
   const mrpRows = [];
   if(hasMrp){
-    rows.forEach(r => {
-      if(r.varQty === null || r.adjQty === null) return;
+    const MV = (ignoreStore && mrpStoreWise) ? aggregate("variance", false)   : V;
+    const MA = (ignoreStore && mrpStoreWise) ? aggregate("adjustment", false) : A;
+    new Set([...MV.map.keys(), ...MA.map.keys()]).forEach(k => {
+      const v = MV.map.get(k), a = MA.map.get(k);
+      if(!v || !a) return;                 // comparable only where both sides have the pair
+      const vm = v.mrps.length ? v.mrps[0] : null;
+      const am = a.mrps.length ? a.mrps[0] : null;
       let mc;
-      if(r.varMrps.length > 1 || r.adjMrps.length > 1)   mc = "mrpmulti";
-      else if(r.varMrp === null || r.adjMrp === null)    mc = "mrpmissing";
-      else if(r.varMrp === r.adjMrp)                     mc = "mrpok";
-      else                                               mc = "mrpdiff";
-      r.mrpCat = mc;
-      const g = mc === "mrpmulti" ? null : (r.varMrp || 0) - (r.adjMrp || 0);
+      if(v.mrps.length > 1 || a.mrps.length > 1) mc = "mrpmulti";
+      else if(vm === null || am === null)        mc = "mrpmissing";
+      else if(vm === am)                         mc = "mrpok";
+      else                                       mc = "mrpdiff";
+      const g = mc === "mrpmulti" ? null : (vm || 0) - (am || 0);
       mrpRows.push({
-        barcode:r.barcode, store:r.store, desc:r.desc,
-        varMrp:r.varMrp, adjMrp:r.adjMrp, mrpGap:g, absMrpGap: g === null ? null : Math.abs(g),
-        varMrpAll: r.varMrps.map(fmtNum).join(" / "), adjMrpAll: r.adjMrps.map(fmtNum).join(" / "),
-        varQty:r.varQty, adjQty:r.adjQty, lines:r.lines, mrpCat:mc
+        barcode: v.barcode, store: v.storeRaw || a.storeRaw, desc: v.desc || a.desc,
+        varMrp: vm, adjMrp: am, mrpGap: g, absMrpGap: g === null ? null : Math.abs(g),
+        varMrpAll: v.mrps.map(fmtNum).join(" / "), adjMrpAll: a.mrps.map(fmtNum).join(" / "),
+        varQty: v.qty, adjQty: a.qty, lines: v.lines + "/" + a.lines, mrpCat: mc
       });
     });
   }
@@ -660,7 +665,7 @@ function reconcile(){
   const hasVarVal = state.variance.map.value >= 0;
   const hasAdjVal = state.adjustment.map.value >= 0;
   const hasDate   = state.variance.map.date >= 0 || state.adjustment.map.date >= 0;
-  state.result = {rows, mrpRows, hasMrp, hasVarVal, hasAdjVal, hasDate, ignoreStore,
+  state.result = {rows, mrpRows, hasMrp, mrpStoreWise, hasVarVal, hasAdjVal, hasDate, ignoreStore,
                   skipped: V.skipped + A.skipped,
                   merged: rows.filter(r => r.merged).length,
                   varKeys: V.map.size, adjKeys: A.map.size};
@@ -790,12 +795,19 @@ function renderMrpPane(){
   document.getElementById("mrp-summary").innerHTML = h;
 
   const warn = document.getElementById("mrp-warn");
-  if(n("mrpmulti")){
-    warn.innerHTML = n("mrpmulti").toLocaleString("en-IN") +
+  const notes = [];
+  if(R.ignoreStore && R.mrpStoreWise)
+    notes.push("Quantities were matched on barcode alone, but MRP is still checked store by store, " +
+               "so this tab shows more pairs than the reconciliation tab.");
+  if(R.ignoreStore && !R.mrpStoreWise)
+    notes.push("No store column is mapped on both reports, so MRP could not be checked per store. " +
+               "Map the store column on both sides to compare a price against the store that carries it.");
+  if(n("mrpmulti"))
+    notes.push(n("mrpmulti").toLocaleString("en-IN") +
       " barcode-store pairs carry more than one MRP inside a single report. Every distinct " +
-      "MRP is listed, so check whether the item was re-priced part way through the period.";
-    warn.classList.remove("hidden");
-  } else warn.classList.add("hidden");
+      "MRP is listed, so check whether the item was re-priced part way through the period.");
+  if(notes.length){ warn.innerHTML = notes.join("<br>"); warn.classList.remove("hidden"); }
+  else warn.classList.add("hidden");
 
   document.getElementById("cnt-mrp").textContent = mrpExceptions().length.toLocaleString("en-IN");
   renderMrpTable();
