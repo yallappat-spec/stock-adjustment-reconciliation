@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock Adjustment Reconciliation</title>
+<script src="vendor/xlsx.full.min.js"></script>
+<style>
+:root{
+  --ink:#16232B;
+  --ink-soft:#3C4A54;
+  --paper:#F4F5F7;
+  --panel:#FFFFFF;
+  --line:#DCE0E5;
+  --line-strong:#B9C0C8;
+  --accent:#0E7C7B;
+  --accent-dark:#0A5C5B;
+  --c-pending:#B45309;
+  --c-unsupported:#B01B2E;
+  --c-direction:#6B3FA0;
+  --c-qty:#1D5FA8;
+  --c-matched:#2E7D4F;
+  --radius:6px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  font-size:15px;
+  line-height:1.5;
+  font-variant-numeric:tabular-nums;
+}
+.wrap{max-width:1240px;margin:0 auto;padding:0 22px 80px}
+
+/* ---------- header ---------- */
+header{background:var(--ink);color:#EAEEF1;padding:26px 0 24px;margin-bottom:26px}
+header .wrap{padding-bottom:0}
+header h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0 0 5px}
+header p{margin:0;color:#9BAAB5;font-size:14px;max-width:70ch}
+
+/* ---------- panels ---------- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:18px}
+.panel-head{display:flex;align-items:baseline;gap:11px;padding:15px 20px;border-bottom:1px solid var(--line)}
+.step{width:22px;height:22px;flex:none;border-radius:50%;background:var(--ink);color:#fff;
+  font-size:12px;font-weight:600;display:grid;place-items:center;position:relative;top:2px}
+.panel-head h2{font-size:16px;font-weight:600;margin:0}
+.panel-head .hint{font-size:13px;color:var(--ink-soft);margin-left:auto;text-align:right}
+.panel-body{padding:20px}
+
+/* ---------- file slots ---------- */
+.slots{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.slot{border:1.5px dashed var(--line-strong);border-radius:var(--radius);padding:20px;text-align:center;
+  transition:border-color .15s,background .15s;cursor:pointer;background:#FAFBFC}
+.slot:hover,.slot.drag{border-color:var(--accent);background:#F1F8F8}
+.slot.loaded{border-style:solid;border-color:var(--accent);background:#F1F8F8;text-align:left}
+.slot h3{margin:0 0 4px;font-size:14px;font-weight:600}
+.slot .sub{font-size:13px;color:var(--ink-soft);margin:0}
+.slot .fname{font-size:13px;color:var(--accent-dark);font-weight:600;word-break:break-all;margin-top:6px}
+.slot input[type=file]{display:none}
+
+/* ---------- mapping ---------- */
+.mapgrid{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+.mapcol h3{font-size:14px;font-weight:600;margin:0 0 3px}
+.mapcol .file-ref{font-size:12.5px;color:var(--ink-soft);margin:0 0 14px;word-break:break-all}
+.field{margin-bottom:11px}
+.field label{display:block;font-size:12.5px;color:var(--ink-soft);margin-bottom:3px}
+select,input[type=text],input[type=number]{
+  width:100%;padding:7px 9px;border:1px solid var(--line-strong);border-radius:4px;
+  background:#fff;font:inherit;font-size:14px;color:var(--ink)}
+select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.checkline{display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:13.5px;color:var(--ink-soft)}
+.checkline input{margin-top:3px;flex:none}
+.optional{color:var(--line-strong);font-weight:400}
+
+.actions{display:flex;align-items:center;gap:14px;margin-top:22px;padding-top:18px;border-top:1px solid var(--line);flex-wrap:wrap}
+button{font:inherit;border-radius:4px;border:1px solid transparent;cursor:pointer}
+.btn-primary{background:var(--accent);color:#fff;padding:9px 20px;font-weight:600;font-size:14.5px}
+.btn-primary:hover{background:var(--accent-dark)}
+.btn-primary:disabled{background:#C3CAD1;cursor:not-allowed}
+.btn-ghost{background:#fff;border-color:var(--line-strong);color:var(--ink);padding:7px 14px;font-size:13.5px}
+.btn-ghost:hover{border-color:var(--ink-soft)}
+
+/* ---------- results ---------- */
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:18px}
+.stat{background:var(--panel);padding:14px 16px}
+.stat .n{font-size:25px;font-weight:600;letter-spacing:-.02em;line-height:1.15}
+.stat .l{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
+.stat .v{font-size:12px;color:var(--ink-soft);margin-top:5px}
+.stat.pending .n{color:var(--c-pending)}
+.stat.unsupported .n{color:var(--c-unsupported)}
+.stat.direction .n{color:var(--c-direction)}
+.stat.qty .n{color:var(--c-qty)}
+.stat.matched .n{color:var(--c-matched)}
+
+.toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:13px}
+.chip{background:#fff;border:1px solid var(--line-strong);border-radius:20px;padding:5px 13px;font-size:13px;
+  display:inline-flex;align-items:center;gap:7px}
+.chip .dot{width:8px;height:8px;border-radius:50%;background:var(--line-strong)}
+.chip[aria-pressed="true"]{border-color:var(--ink);background:var(--ink);color:#fff}
+.chip[data-c="pending"] .dot{background:var(--c-pending)}
+.chip[data-c="unsupported"] .dot{background:var(--c-unsupported)}
+.chip[data-c="direction"] .dot{background:var(--c-direction)}
+.chip[data-c="qty"] .dot{background:var(--c-qty)}
+.chip[data-c="matched"] .dot{background:var(--c-matched)}
+.toolbar .grow{margin-left:auto;display:flex;gap:9px}
+#search{width:230px}
+
+.tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:auto;max-height:640px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{position:sticky;top:0;background:#EEF1F3;text-align:left;padding:9px 12px;font-weight:600;font-size:12.5px;
+  border-bottom:1px solid var(--line-strong);white-space:nowrap;cursor:pointer;z-index:2}
+th:hover{background:#E3E8EB}
+th .arrow{color:var(--accent);margin-left:3px}
+td{padding:8px 12px;border-bottom:1px solid #EFF1F3;white-space:nowrap}
+tbody tr:hover td{background:#F7F9FA}
+.num{text-align:right}
+.neg{color:var(--c-unsupported)}
+.tag{display:inline-block;padding:2px 9px;border-radius:3px;font-size:12px;font-weight:600;color:#fff}
+.tag.pending{background:var(--c-pending)}
+.tag.unsupported{background:var(--c-unsupported)}
+.tag.direction{background:var(--c-direction)}
+.tag.qty{background:var(--c-qty)}
+.tag.matched{background:var(--c-matched)}
+.bc{font-weight:600}
+.empty{padding:44px 20px;text-align:center;color:var(--ink-soft);font-size:14px}
+.rowcount{font-size:13px;color:var(--ink-soft);margin-top:10px}
+
+.notice{background:#FFF6E8;border:1px solid #EBD3A8;color:#7A4E06;padding:11px 14px;border-radius:4px;
+  font-size:13.5px;margin-bottom:16px}
+.notice.error{background:#FDEEF0;border-color:#E9BDC4;color:#8A1424}
+.hidden{display:none}
+@media (max-width:820px){.slots,.mapgrid{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>Stock adjustment reconciliation</h1>
+    <p>Matches the audit variance declaration against adjustments passed in the system, on barcode and store code, and surfaces only what doesn't agree.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div id="setup">
+    <div class="panel">
+      <div class="panel-head">
+        <span class="step">1</span>
+        <h2>Load the two reports</h2>
+        <span class="hint">Excel or CSV · nothing leaves this browser</span>
+      </div>
+      <div class="panel-body">
+        <div class="slots">
+          <label class="slot" id="slot-var">
+            <input type="file" id="file-var" accept=".xlsx,.xls,.xlsm,.csv">
+            <h3>Variance report</h3>
+            <p class="sub">Audit declaration — what physical count says is short or in excess</p>
+            <p class="fname hidden"></p>
+          </label>
+          <label class="slot" id="slot-adj">
+            <input type="file" id="file-adj" accept=".xlsx,.xls,.xlsm,.csv">
+            <h3>Stock adjustment report</h3>
+            <p class="sub">What was actually adjusted in the system</p>
+            <p class="fname hidden"></p>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel hidden" id="panel-map">
+      <div class="panel-head">
+        <span class="step">2</span>
+        <h2>Confirm the columns</h2>
+        <span class="hint">Guessed from the headers — correct anything that's wrong</span>
+      </div>
+      <div class="panel-body">
+        <div id="map-error" class="notice error hidden"></div>
+        <div class="mapgrid">
+          <div class="mapcol" id="map-var"></div>
+          <div class="mapcol" id="map-adj"></div>
+        </div>
+        <div class="checkline" style="margin-top:20px">
+          <input type="checkbox" id="ignore-store">
+          <label for="ignore-store">Match on barcode only — tick this if the two files write store codes differently (e.g. <em>HYD-Inorbit</em> in one, <em>Inorbit Mall</em> in the other)</label>
+        </div>
+        <div class="actions">
+          <button class="btn-primary" id="run">Reconcile</button>
+          <button class="btn-ghost" id="reset">Start over</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="results" class="hidden">
+    <div id="warn" class="notice hidden"></div>
+    <div class="summary" id="summary"></div>
+    <div class="toolbar">
+      <button class="chip" data-c="pending" aria-pressed="true"><span class="dot"></span>Not adjusted</button>
+      <button class="chip" data-c="unsupported" aria-pressed="true"><span class="dot"></span>No audit backing</button>
+      <button class="chip" data-c="direction" aria-pressed="true"><span class="dot"></span>Direction mismatch</button>
+      <button class="chip" data-c="qty" aria-pressed="true"><span class="dot"></span>Quantity mismatch</button>
+      <button class="chip" data-c="matched" aria-pressed="false"><span class="dot"></span>Matched</button>
+      <div class="grow">
+        <input type="text" id="search" placeholder="Find a barcode or store">
+        <button class="btn-ghost" id="csv">Download what's shown</button>
+        <button class="btn-ghost" id="back">Change columns</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+    <div class="rowcount" id="rowcount"></div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+
+const CATS = {
+  pending:     {label:"Not adjusted",       desc:"Declared in the audit variance, no adjustment passed"},
+  unsupported: {label:"No audit backing",   desc:"Adjustment passed with no matching variance declaration"},
+  direction:   {label:"Direction mismatch", desc:"Excess declared but shortage adjusted, or the reverse"},
+  qty:         {label:"Quantity mismatch",  desc:"Both sides present, quantities differ"},
+  matched:     {label:"Matched",            desc:"Variance and adjustment agree"}
+};
+
+const state = {
+  variance:   {name:null, rows:null, sheets:null, sheet:null, headerRow:0, headers:[]},
+  adjustment: {name:null, rows:null, sheets:null, sheet:null, headerRow:0, headers:[]},
+  result: null,
+  sortKey: "absGap",
+  sortDir: -1
+};
+
+/* ---------------- value helpers ---------------- */
+
+function cellText(v){
+  if(v===null||v===undefined) return "";
+  if(typeof v==="number"){
+    if(Number.isInteger(v)) return v.toFixed(0);      // keeps long barcodes out of scientific notation
+    return String(v);
+  }
+  if(v instanceof Date) return v.toISOString().slice(0,10);
+  return String(v);
+}
+function normKey(v){
+  return cellText(v).trim().toUpperCase().replace(/\s+/g,"");
+}
+function toNum(v){
+  if(typeof v==="number") return isFinite(v)?v:0;
+  let s = cellText(v).trim();
+  if(!s) return 0;
+  let neg = /^\(.*\)$/.test(s);
+  s = s.replace(/[(),₹$\s]/g,"").replace(/[^0-9.\-+eE]/g,"");
+  let n = parseFloat(s);
+  if(!isFinite(n)) return 0;
+  return neg ? -Math.abs(n) : n;
+}
+function signFromType(v){
+  const s = cellText(v).toLowerCase();
+  if(/short|less|neg|minus|deficit|missing|loss|write.?off|debit|reduc|remove/.test(s)) return -1;
+  if(/excess|extra|more|plus|surplus|over|gain|credit|add/.test(s)) return 1;
+  return 1;
+}
+function fmtNum(n){
+  if(n===null||n===undefined||n==="") return "";
+  const r = Math.round(n*100)/100;
+  return r.toLocaleString("en-IN");
+}
+function fmtSigned(n){
+  if(!n) return fmtNum(n||0);
+  return (n>0?"+":"") + fmtNum(n);
+}
+
+/* ---------------- file loading ---------------- */
+
+function bindSlot(slotId, inputId, which){
+  const slot = document.getElementById(slotId);
+  const input = document.getElementById(inputId);
+  input.addEventListener("change", e => {
+    if(e.target.files[0]) loadFile(e.target.files[0], which, slot);
+  });
+  ["dragenter","dragover"].forEach(ev =>
+    slot.addEventListener(ev, e => {e.preventDefault(); slot.classList.add("drag");}));
+  ["dragleave","drop"].forEach(ev =>
+    slot.addEventListener(ev, e => {e.preventDefault(); slot.classList.remove("drag");}));
+  slot.addEventListener("drop", e => {
+    const f = e.dataTransfer.files[0];
+    if(f) loadFile(f, which, slot);
+  });
+}
+
+function loadFile(file, which, slot){
+  const reader = new FileReader();
+  reader.onload = ev => {
+    let wb;
+    try{
+      wb = XLSX.read(new Uint8Array(ev.target.result), {type:"array", cellDates:true});
+    }catch(err){
+      showMapError("Couldn't open " + file.name + ". Save it as .xlsx or .csv and try again.");
+      return;
+    }
+    const s = state[which];
+    s.name = file.name;
+    s.wb = wb;
+    s.sheets = wb.SheetNames;
+    s.sheet = wb.SheetNames[0];
+    readSheet(which);
+    slot.classList.add("loaded");
+    const fn = slot.querySelector(".fname");
+    fn.textContent = file.name;
+    fn.classList.remove("hidden");
+    maybeShowMapping();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function readSheet(which){
+  const s = state[which];
+  const ws = s.wb.Sheets[s.sheet];
+  s.rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, blankrows:false, raw:true});
+  s.headerRow = detectHeaderRow(s.rows);
+  s.headers = buildHeaders(s.rows, s.headerRow);
+}
+
+function detectHeaderRow(rows){
+  let best = 0, bestScore = -1;
+  const limit = Math.min(rows.length, 15);
+  for(let i=0;i<limit;i++){
+    const row = rows[i] || [];
+    let filled = 0, texty = 0;
+    row.forEach(c => {
+      const t = cellText(c).trim();
+      if(t){ filled++; if(!/^-?[\d.,]+$/.test(t)) texty++; }
+    });
+    const score = filled + texty * 1.5;
+    if(score > bestScore){ bestScore = score; best = i; }
+  }
+  return best;
+}
+
+function buildHeaders(rows, hr){
+  const row = rows[hr] || [];
+  let width = row.length;
+  for(let i=hr; i<Math.min(rows.length, hr+40); i++)
+    width = Math.max(width, (rows[i]||[]).length);
+  const out = [];
+  for(let i=0;i<width;i++){
+    const t = cellText(row[i]).trim();
+    out.push(t || ("Column " + (i+1)));
+  }
+  return out;
+}
+
+/* Decides how direction is expressed by looking at the data, not just header names.
+   A quantity column that already contains negatives settles it. Otherwise a candidate
+   text column only wins if its values actually read as short/excess wording. */
+function detectDirection(s, qtyCol){
+  let neg = 0, seen = 0;
+  for(let r = s.headerRow+1; r < s.rows.length && seen < 500; r++){
+    const row = s.rows[r]; if(!row) continue;
+    const n = toNum(row[qtyCol]);
+    if(n){ seen++; if(n < 0) neg++; }
+  }
+  if(neg > 0) return {col:-1, mode:"signed"};
+
+  let best = -1, bestRate = 0;
+  s.headers.forEach((h,i) => {
+    if(!/type|nature|short.*excess|direction|add.*reduc|reason|remark|status/i.test(h)) return;
+    let hits = 0, tot = 0;
+    for(let r = s.headerRow+1; r < s.rows.length && tot < 500; r++){
+      const row = s.rows[r]; if(!row) continue;
+      const txt = cellText(row[i]).trim();
+      if(!txt) continue;
+      tot++;
+      if(/short|less|deficit|missing|reduc|excess|extra|surplus|add|over/i.test(txt)) hits++;
+    }
+    const rate = tot ? hits/tot : 0;
+    if(tot >= 3 && rate >= 0.6 && rate > bestRate){ bestRate = rate; best = i; }
+  });
+  return best >= 0 ? {col:best, mode:"type"} : {col:-1, mode:"signed"};
+}
+
+function guess(headers, patterns, avoid){
+  for(const p of patterns){
+    for(let i=0;i<headers.length;i++){
+      const h = headers[i].toLowerCase();
+      if(avoid && avoid.test(h)) continue;
+      if(p.test(h)) return i;
+    }
+  }
+  return -1;
+}
+
+/* ---------------- mapping UI ---------------- */
+
+function maybeShowMapping(){
+  if(!state.variance.rows || !state.adjustment.rows) return;
+  document.getElementById("panel-map").classList.remove("hidden");
+  renderMapper("variance", "map-var", "Variance report");
+  renderMapper("adjustment", "map-adj", "Stock adjustment report");
+  hideMapError();
+}
+
+function opts(headers, sel, allowNone){
+  let h = allowNone ? '<option value="-1">— none —</option>' : "";
+  headers.forEach((name,i) => {
+    h += '<option value="'+i+'"'+(i===sel?" selected":"")+'>'+escapeHtml(name)+'</option>';
+  });
+  return h;
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function renderMapper(which, elId, title){
+  const s = state[which];
+  const H = s.headers;
+  const g = {
+    barcode: guess(H,[/bar\s*code/,/^bc$/,/item\s*code/,/^sku/,/article/,/product\s*code/]),
+    store:   guess(H,[/store/,/branch/,/outlet/,/location/,/site/,/shop/]),
+    qty:     guess(H,[/(diff|var|adj|short|excess).*(qty|quantity|pcs)/,/(qty|quantity|pcs|pieces)/,/difference/,/variance/],/value|amount|rate|mrp|cost|price/),
+    value:   guess(H,[/(diff|var|adj).*(value|amount|amt)/,/(stk|stock|net|total).*value/,/^value/,/amount/,/^amt/],
+                     /bar\s*code|item\s*code|design|hsn|^code|sac/),
+    desc:    guess(H,[/item\s*name/,/description/,/product\s*name/,/^desc/,/category/,/design/]),
+    date:    guess(H,[/trans.*date/,/adj.*date/,/audit.*date/,/^date/,/date$/],/update|modif/)
+  };
+  const dir = detectDirection(s, g.qty);
+  g.type = dir.col;
+  g.signMode = dir.mode;
+  const el = document.getElementById(elId);
+  el.innerHTML =
+    '<h3>'+escapeHtml(title)+'</h3>'+
+    '<p class="file-ref">'+escapeHtml(s.name)+'</p>'+
+    (s.sheets.length>1 ?
+      '<div class="field"><label>Sheet</label><select data-f="'+which+'" data-k="sheet">'+
+      s.sheets.map(n=>'<option'+(n===s.sheet?" selected":"")+'>'+escapeHtml(n)+'</option>').join("")+
+      '</select></div>' : "")+
+    '<div class="field"><label>Header row (row number in the file)</label>'+
+      '<input type="number" min="1" value="'+(s.headerRow+1)+'" data-f="'+which+'" data-k="headerRow"></div>'+
+    '<div class="field"><label>Barcode</label><select data-f="'+which+'" data-k="barcode">'+opts(H,g.barcode)+'</select></div>'+
+    '<div class="field"><label>Store code</label><select data-f="'+which+'" data-k="store">'+opts(H,g.store)+'</select></div>'+
+    '<div class="field"><label>Quantity</label><select data-f="'+which+'" data-k="qty">'+opts(H,g.qty)+'</select></div>'+
+    '<div class="field"><label>How is the direction shown?</label>'+
+      '<select data-f="'+which+'" data-k="signMode">'+
+        '<option value="signed"'+(g.signMode==="signed"?" selected":"")+'>Quantity is already signed (+ excess, − short)</option>'+
+        '<option value="type"'+(g.signMode==="type"?" selected":"")+'>All positive — a separate column says short or excess</option>'+
+      '</select></div>'+
+    '<div class="field '+(g.signMode==="type"?"":"hidden")+'" data-role="typefield-'+which+'"><label>Short / excess column</label>'+
+      '<select data-f="'+which+'" data-k="typeCol">'+opts(H,g.type,true)+'</select></div>'+
+    '<div class="field"><label>Value <span class="optional">(optional)</span></label>'+
+      '<select data-f="'+which+'" data-k="value">'+opts(H,g.value,true)+'</select></div>'+
+    '<div class="field"><label>Date <span class="optional">(optional)</span></label>'+
+      '<select data-f="'+which+'" data-k="date">'+opts(H,g.date,true)+'</select></div>'+
+    '<div class="field"><label>Item name <span class="optional">(optional)</span></label>'+
+      '<select data-f="'+which+'" data-k="desc">'+opts(H,g.desc,true)+'</select></div>'+
+    '<div class="checkline"><input type="checkbox" data-f="'+which+'" data-k="flip" id="flip-'+which+'">'+
+      '<label for="flip-'+which+'">Reverse the sign of this file</label></div>';
+
+  s.map = {barcode:g.barcode, store:g.store, qty:g.qty, value:g.value, desc:g.desc, date:g.date,
+           typeCol:g.type, signMode:g.signMode, flip:false};
+}
+
+document.addEventListener("change", e => {
+  const f = e.target.dataset.f, k = e.target.dataset.k;
+  if(!f || !k) return;
+  const s = state[f];
+  if(k === "sheet"){
+    s.sheet = e.target.value;
+    readSheet(f);
+    renderMapper(f, f==="variance"?"map-var":"map-adj", f==="variance"?"Variance report":"Stock adjustment report");
+    return;
+  }
+  if(k === "headerRow"){
+    s.headerRow = Math.max(0, parseInt(e.target.value,10)-1 || 0);
+    s.headers = buildHeaders(s.rows, s.headerRow);
+    renderMapper(f, f==="variance"?"map-var":"map-adj", f==="variance"?"Variance report":"Stock adjustment report");
+    return;
+  }
+  if(k === "flip"){ s.map.flip = e.target.checked; return; }
+  if(k === "signMode"){
+    s.map.signMode = e.target.value;
+    const tf = document.querySelector('[data-role="typefield-'+f+'"]');
+    if(tf) tf.classList.toggle("hidden", e.target.value !== "type");
+    return;
+  }
+  s.map[k] = parseInt(e.target.value,10);
+});
+
+/* ---------------- reconciliation ---------------- */
+
+function aggregate(which, ignoreStore){
+  const s = state[which], m = s.map, out = new Map();
+  let skipped = 0;
+  for(let r = s.headerRow + 1; r < s.rows.length; r++){
+    const row = s.rows[r]; if(!row) continue;
+    const bc = normKey(row[m.barcode]);
+    if(!bc) { skipped++; continue; }
+    const store = (ignoreStore || m.store < 0) ? "" : normKey(row[m.store]);
+    const key = bc + "\u0001" + store;
+
+    let q = toNum(row[m.qty]);
+    if(m.signMode === "type" && m.typeCol >= 0) q = Math.abs(q) * signFromType(row[m.typeCol]);
+    if(m.flip) q = -q;
+
+    let v = m.value >= 0 ? Math.abs(toNum(row[m.value])) * (q < 0 ? -1 : 1) : 0;
+    const d  = m.desc >= 0 ? cellText(row[m.desc]).trim() : "";
+    const dt = m.date >= 0 ? cellText(row[m.date]).trim() : "";
+
+    if(out.has(key)){
+      const e = out.get(key);
+      e.qty += q; e.val += v; e.lines++;
+      if(!e.desc && d) e.desc = d;
+      if(dt && !e.dates.includes(dt)) e.dates.push(dt);
+    } else {
+      out.set(key, {barcode: cellText(row[m.barcode]).trim(), storeRaw: m.store>=0?cellText(row[m.store]).trim():"",
+                    qty:q, val:v, desc:d, lines:1, dates: dt?[dt]:[]});
+    }
+  }
+  return {map: out, skipped};
+}
+
+function reconcile(){
+  const ignoreStore = document.getElementById("ignore-store").checked;
+  for(const w of ["variance","adjustment"]){
+    const m = state[w].map;
+    if(m.barcode < 0){ showMapError("Pick the barcode column for both reports before reconciling."); return; }
+    if(m.qty < 0){ showMapError("Pick the quantity column for both reports before reconciling."); return; }
+    if(!ignoreStore && m.store < 0){
+      showMapError("Pick the store code column for both reports, or tick the barcode-only option below.");
+      return;
+    }
+  }
+  hideMapError();
+
+  const V = aggregate("variance", ignoreStore);
+  const A = aggregate("adjustment", ignoreStore);
+  const keys = new Set([...V.map.keys(), ...A.map.keys()]);
+  const rows = [];
+
+  keys.forEach(k => {
+    const v = V.map.get(k), a = A.map.get(k);
+    const vq = v ? v.qty : null, aq = a ? a.qty : null;
+    let cat;
+    if(v && !a)       cat = "pending";
+    else if(a && !v)  cat = "unsupported";
+    else if(vq === aq) cat = "matched";
+    else if(vq !== 0 && aq !== 0 && Math.sign(vq) !== Math.sign(aq)) cat = "direction";
+    else cat = "qty";
+
+    const gap = (vq || 0) - (aq || 0);
+    const dts = [...new Set([...(v?v.dates:[]), ...(a?a.dates:[])])];
+    rows.push({
+      barcode: (v || a).barcode,
+      store:   (v || a).storeRaw,
+      desc:    (v && v.desc) || (a && a.desc) || "",
+      date:    dts.length > 1 ? dts[0] + " +" + (dts.length-1) : (dts[0] || ""),
+      varQty:  vq, adjQty: aq, gap, absGap: Math.abs(gap),
+      varVal:  v ? v.val : null, adjVal: a ? a.val : null,
+      valGap:  ((v ? v.val : 0) - (a ? a.val : 0)),
+      lines:   (v?v.lines:0) + "/" + (a?a.lines:0),
+      merged:  Math.max(v?v.lines:0, a?a.lines:0) > 1,
+      cat
+    });
+  });
+
+  const hasVarVal = state.variance.map.value >= 0;
+  const hasAdjVal = state.adjustment.map.value >= 0;
+  const hasDate   = state.variance.map.date >= 0 || state.adjustment.map.date >= 0;
+  state.result = {rows, hasVarVal, hasAdjVal, hasDate, ignoreStore, skipped: V.skipped + A.skipped,
+                  merged: rows.filter(r => r.merged).length,
+                  varKeys: V.map.size, adjKeys: A.map.size};
+  renderResults();
+}
+
+/* ---------------- results ---------------- */
+
+function activeCats(){
+  return [...document.querySelectorAll(".chip")]
+    .filter(c => c.getAttribute("aria-pressed") === "true")
+    .map(c => c.dataset.c);
+}
+
+function visibleRows(){
+  const cats = activeCats();
+  const q = document.getElementById("search").value.trim().toUpperCase();
+  return state.result.rows.filter(r => {
+    if(!cats.includes(r.cat)) return false;
+    if(q && !(r.barcode.toUpperCase().includes(q) || r.store.toUpperCase().includes(q)
+              || r.desc.toUpperCase().includes(q))) return false;
+    return true;
+  }).sort((x,y) => {
+    const a = x[state.sortKey], b = y[state.sortKey];
+    if(a === null) return 1;
+    if(b === null) return -1;
+    if(typeof a === "string") return a.localeCompare(b) * state.sortDir;
+    return (a - b) * state.sortDir;
+  });
+}
+
+function renderResults(){
+  const R = state.result;
+  document.getElementById("setup").classList.add("hidden");
+  document.getElementById("results").classList.remove("hidden");
+
+  const count = c => R.rows.filter(r => r.cat === c).length;
+  const netQty = c => R.rows.filter(r => r.cat === c).reduce((s,r) => s + (r.gap || 0), 0);
+  const stats = [
+    ["pending","Not adjusted"],
+    ["unsupported","No audit backing"],
+    ["direction","Direction mismatch"],
+    ["qty","Quantity mismatch"],
+    ["matched","Matched"]
+  ];
+  let h = "";
+  stats.forEach(([c,label]) => {
+    const n = count(c);
+    h += '<div class="stat '+c+'"><div class="n">'+n.toLocaleString("en-IN")+'</div>'+
+         '<div class="l">'+label+'</div>'+
+         (c!=="matched" && n ? '<div class="v">net '+fmtSigned(netQty(c))+' pcs</div>' : '<div class="v">&nbsp;</div>')+
+         '</div>';
+  });
+  const exceptions = R.rows.length - count("matched");
+  h += '<div class="stat"><div class="n">'+R.rows.length.toLocaleString("en-IN")+'</div>'+
+       '<div class="l">Barcode–store pairs</div>'+
+       '<div class="v">'+exceptions.toLocaleString("en-IN")+' need attention</div></div>';
+  document.getElementById("summary").innerHTML = h;
+
+  const warn = document.getElementById("warn");
+  const notes = [];
+  if(R.ignoreStore) notes.push("Matched on barcode alone — the same barcode across two stores is being treated as one line.");
+  if(R.skipped) notes.push(R.skipped.toLocaleString("en-IN") + " rows had a blank barcode and were left out (totals rows at the bottom of an export land here).");
+  if(R.merged) notes.push(R.merged.toLocaleString("en-IN") + " barcode–store pairs had more than one line and were summed before comparing. The Lines column shows variance/adjustment counts.");
+  if(count("unsupported") > 0)
+    notes.push(count("unsupported") + " adjustments carry no audit declaration behind them. Those are the ones to chase first.");
+  if(notes.length){ warn.innerHTML = notes.join("<br>"); warn.classList.remove("hidden"); }
+  else warn.classList.add("hidden");
+
+  renderTable();
+}
+
+function buildCols(R){
+  const cols = [
+    {k:"barcode", t:"Barcode", cls:"bc"},
+    {k:"store",   t:"Store",   cls:""},
+    {k:"desc",    t:"Item",    cls:""}
+  ];
+  if(R.hasDate) cols.push({k:"date", t:"Date", cls:""});
+  cols.push(
+    {k:"varQty", t:"Variance qty", cls:"num", num:true},
+    {k:"adjQty", t:"Adjusted qty", cls:"num", num:true},
+    {k:"gap",    t:"Gap",          cls:"num", num:true, signed:true}
+  );
+  if(R.hasVarVal && R.hasAdjVal) cols.push({k:"valGap", t:"Value gap", cls:"num", num:true, signed:true});
+  else if(R.hasAdjVal)           cols.push({k:"adjVal", t:"Adjusted value", cls:"num", num:true, signed:true});
+  else if(R.hasVarVal)           cols.push({k:"varVal", t:"Variance value", cls:"num", num:true, signed:true});
+  cols.push({k:"lines", t:"Lines", cls:"num"});
+  cols.push({k:"cat", t:"Finding", cls:""});
+  return cols;
+}
+
+function renderTable(){
+  const R = state.result;
+  const cols = buildCols(R);
+  const rows = visibleRows();
+  const thead = document.querySelector("#tbl thead");
+  thead.innerHTML = "<tr>" + cols.map(c =>
+    '<th data-k="'+c.k+'" class="'+(c.num?"num":"")+'">'+c.t+
+    (state.sortKey===c.k?'<span class="arrow">'+(state.sortDir>0?"\u2191":"\u2193")+'</span>':'')+
+    '</th>').join("") + "</tr>";
+
+  const tb = document.querySelector("#tbl tbody");
+  if(!rows.length){
+    tb.innerHTML = '<tr><td colspan="'+cols.length+'"><div class="empty">Nothing to show. Turn a category back on above, or clear the search.</div></td></tr>';
+  } else {
+    tb.innerHTML = rows.slice(0, 4000).map(r => "<tr>" + cols.map(c => {
+      let v = r[c.k], cls = c.cls;
+      if(c.k === "cat") return '<td><span class="tag '+v+'">'+CATS[v].label+'</span></td>';
+      if(c.num){
+        if(v === null || v === undefined) return '<td class="num" style="color:#B9C0C8">—</td>';
+        if(v < 0) cls += " neg";
+        return '<td class="'+cls+'">'+(c.signed?fmtSigned(v):fmtNum(v))+'</td>';
+      }
+      return '<td class="'+cls+'">'+escapeHtml(v||"")+'</td>';
+    }).join("") + "</tr>").join("");
+  }
+  document.getElementById("rowcount").textContent =
+    rows.length.toLocaleString("en-IN") + " row" + (rows.length===1?"":"s") + " shown" +
+    (rows.length > 4000 ? " — first 4,000 rendered, download for the rest" : "");
+}
+
+document.querySelector("#tbl thead").addEventListener("click", e => {
+  const th = e.target.closest("th"); if(!th) return;
+  const k = th.dataset.k;
+  if(state.sortKey === k) state.sortDir *= -1;
+  else { state.sortKey = k; state.sortDir = (k==="barcode"||k==="store"||k==="desc"||k==="cat") ? 1 : -1; }
+  renderTable();
+});
+
+document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => {
+  c.setAttribute("aria-pressed", c.getAttribute("aria-pressed")==="true" ? "false" : "true");
+  renderTable();
+}));
+document.getElementById("search").addEventListener("input", renderTable);
+
+document.getElementById("csv").addEventListener("click", () => {
+  const cols = buildCols(state.result);
+  const esc = s => '"' + String(s===null||s===undefined?"":s).replace(/"/g,'""') + '"';
+  const lines = [cols.map(c => esc(c.t)).join(",")];
+  visibleRows().forEach(r => {
+    lines.push(cols.map(c => esc(c.k==="cat" ? CATS[r.cat].label : r[c.k])).join(","));
+  });
+  const blob = new Blob(["\ufeff"+lines.join("\r\n")], {type:"text/csv;charset=utf-8;"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "stock-adjustment-exceptions-" + new Date().toISOString().slice(0,10) + ".csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById("back").addEventListener("click", () => {
+  document.getElementById("results").classList.add("hidden");
+  document.getElementById("setup").classList.remove("hidden");
+});
+document.getElementById("run").addEventListener("click", reconcile);
+document.getElementById("reset").addEventListener("click", () => location.reload());
+
+function showMapError(msg){
+  const e = document.getElementById("map-error");
+  e.textContent = msg; e.classList.remove("hidden");
+  e.scrollIntoView({block:"center", behavior:"smooth"});
+}
+function hideMapError(){ document.getElementById("map-error").classList.add("hidden"); }
+
+bindSlot("slot-var","file-var","variance");
+bindSlot("slot-adj","file-adj","adjustment");
+</script>
+
+
+</body></html>

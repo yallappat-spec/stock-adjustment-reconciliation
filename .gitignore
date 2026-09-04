@@ -1,0 +1,15 @@
+# Saved browser snapshot of a real reconciliation run — contains live store,
+# barcode and quantity data. Never commit.
+Stock Adjustment Reconciliation.html
+Stock Adjustment Reconciliation_files/
+
+# Source reports
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+
+# OS noise
+Thumbs.db
+desktop.ini
+.DS_Store
