@@ -13,3 +13,6 @@ Stock Adjustment Reconciliation_files/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# local dev only
+.claude/
